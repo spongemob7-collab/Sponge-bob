@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isValidId(id) { return id is string && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data) {
+      return data.age is int && data.age > 0 && data.age < 150
+          && data.gender in ['male', 'female', 'other']
+          && (data.weight is number || data.weight is int) && data.weight > 0
+          && (data.height is number || data.height is int) && data.height > 0
+          && data.fitnessGoal in ['lose weight', 'maintain', 'gain muscle']
+          && (data.get('targetCalories', 2000) is int || data.get('targetCalories', 2000) is number)
+          && (data.get('dailyWaterTarget', 2000) is int || data.get('dailyWaterTarget', 2000) is number);
+    }
+
+    function isValidMeal(data) {
+      return data.name is string && data.name.size() <= 100
+          && (data.calories is number || data.calories is int)
+          && (data.get('protein', 0) is number || data.get('protein', 0) is int)
+          && (data.get('carbs', 0) is number || data.get('carbs', 0) is int)
+          && (data.get('fats', 0) is number || data.get('fats', 0) is int)
+          && data.category in ['breakfast', 'lunch', 'dinner', 'snack']
+          && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidWorkout(data) {
+      return data.type is string && data.type.size() <= 100
+          && (data.duration is number || data.duration is int)
+          && (data.caloriesBurned is number || data.caloriesBurned is int)
+          && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidDailyStats(data) {
+      return (data.get('steps', 0) is int)
+          && (data.get('waterIntake', 0) is number || data.get('waterIntake', 0) is int)
+          && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidSavedRecipe(data) {
+      return data.title is string && data.title.size() <= 100
+          && data.ingredients is list && data.ingredients.size() <= 50
+          && data.instructions is list && data.instructions.size() <= 50
+          && (data.calories is number || data.calories is int);
+    }
+
+    // --- Collections ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserProfile(incoming());
+      // Specific Action: Profile Update
+      allow update: if isOwner(userId) 
+                    && isValidUserProfile(incoming())
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['age', 'gender', 'weight', 'height', 'fitnessGoal', 'targetCalories', 'dailyWaterTarget', 'updatedAt']);
+
+      match /meals/{mealId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidMeal(incoming());
+        allow update: if isOwner(userId) && isValidMeal(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'calories', 'protein', 'carbs', 'fats', 'category', 'date', 'timestamp']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /workouts/{workoutId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidWorkout(incoming());
+        allow update: if isOwner(userId) && isValidWorkout(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['type', 'duration', 'caloriesBurned', 'date', 'timestamp']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /dailyStats/{dateId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidDailyStats(incoming()) && dateId == incoming().date;
+        allow update: if isOwner(userId) && isValidDailyStats(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['steps', 'waterIntake', 'date']);
+      }
+
+      match /savedRecipes/{recipeId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidSavedRecipe(incoming());
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
